@@ -24,20 +24,16 @@ Vagrant.configure("2") do |config|
     box.vm.provision "shell", inline: <<-SHELL
       sshd_config_path=/etc/ssh/sshd_config
       capub_path=/etc/ssh/ca.pub
-      trusted_user_ca_keys=TrustedUserCAKeys
-      auth_principals_path=/etc/ssh/auth_principals
-      authorized_principals_file=AuthorizedPrincipalsFile
-      authorized_principals_path="${auth_principals_path}/%u"
+
+      function update_sshd_config {
+        grep -q "^${1}" "${sshd_config_path}" && \
+          sed -i "s|^${1}.*|${1} ${2}|" "${sshd_config_path}" || \
+          echo "${1} ${2}" >> "${sshd_config_path}"
+      }
 
       cp /vagrant/my-ca/ca.pub "${capub_path}"
-      grep -q "^${trusted_user_ca_keys}" "${sshd_config_path}" && \
-        sed -i "s|^${trusted_user_ca_keys}.*|${trusted_user_ca_keys} ${capub_path}|" "${sshd_config_path}" || \
-        echo "${trusted_user_ca_keys} ${capub_path}" >> "${sshd_config_path}"
-
-      grep -q "^${authorized_principals_file}" "${sshd_config_path}" && \
-        sed -i "s|^${authorized_principals_file}.*|${authorized_principals_file} ${authorized_principals_path}|" "${sshd_config_path}" || \
-        echo "${authorized_principals_file} ${authorized_principals_path}" >> "${sshd_config_path}"
-
+      update_sshd_config TrustedUserCAKeys "${capub_path}"
+      update_sshd_config AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
       systemctl restart sshd
     SHELL
 
@@ -46,11 +42,10 @@ Vagrant.configure("2") do |config|
       auth_principals_path=/etc/ssh/auth_principals
       mkdir -p "${auth_principals_path}"
 
-      principals=( root ops )
-      for i in "${principals[@]}"
+      for principal in root ops
       do
-        principal_file_path="${auth_principals_path}/${i}"
-        if [ "${i}" == "root" ]; then
+        principal_file_path="${auth_principals_path}/${principal}"
+        if [ "${principal}" == "root" ]; then
           echo root-everywhere > "${principal_file_path}"
         else
           echo -e 'zone-webservers\nzone-databases' > "${principal_file_path}"
