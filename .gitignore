@@ -1,3 +1,4 @@
 .vagrant
 *.pem
 my-ops-key*
+my-ca

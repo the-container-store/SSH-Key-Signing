@@ -19,10 +19,15 @@ o888o  o888o`Y8bod8P'    .8'         8""88888P' o888o`8oooooo. o888o o888oo888oo
 
 # Table of Contents
 1. [Motivation](#motivation)
-2. [Implementation](#implementation)
-    * [Requirements](#requirements)
-    * [Sign your key](#sign-your-key)
-    * [Breaking it down](#breaking-it-down)
+2. [Implementations](#implementations)
+    * [Make your own CA](#make-your-own-ca)
+        * [Requirements](#requirements)
+        * [Sign your key](#sign-your-key)
+        * [Caveat](#caveat)
+    * [Use Vault as a CA](#use-vault-as-a-ca)
+        * [Requirements](#requirements-1)
+        * [Sign your key](#sign-your-key-1)
+        * [Breaking it down](#breaking-it-down)
 3. [Resources](#resources)
 4. [Contributors](#contributors)
 
@@ -48,14 +53,90 @@ e.g.: `service_user` and `Service_User` with the same `uid`.
 This frustration led us to look for another solution. Let's talk about what that solution is and
 distill it so you can use it too!
 
-# Implementation
+# Implementations
 
-## Requirements
+## Make your own CA
+
+### Requirements
+
+* [Vagrant](https://www.vagrantup.com/) to spin up an isolated environment
+
+Jump into the `ca-example` directory and run this:
+```
+vagrant up
+```
+
+What comes up from Vagrant is a setup of two centos 7.4 boxes. The first, we're calling the "CA
+Server". It generates a root private key and and public key. The public key is used to encrypt data
+and is passed around freely. Only the private key can decrypt data that was encrypted by the public
+key. The second server, we're calling the "SSH host" and it represents the remote host that you
+would be logging in to.
+
+### Sign your key
+
+1. To get access to this box, you'll need a private key, let's make one:
+```
+ssh-keygen -t ecdsa -C my-ops-key -f my-ops-key
+```
+2. Take note of your accompanying public key:
+```
+ls -1a | grep ops
+
+my-ops-key
+my-ops-key.pub
+```
+3. Login to our CA Server
+```
+vagrant ssh ca-server
+```
+4. Get that key signed by the certificate authority (our "CA server")
+```
+cd /vagrant && \
+ssh-keygen -s my-ca/ca \
+    -I the-container-store \
+    -n ops \
+    -V +1w \
+    -z 1 \
+    my-ops-key.pub && \
+exit
+```
+5. Inspect the signed public key
+```
+ssh-keygen -Lf my-ops-key-cert.pub
+```
+6. Check which port ssh is listening on for our box:
+```
+vagrant port ssh-host
+The forwarded ports for the machine are listed below. Please note that
+these values may differ from values configured in the Vagrantfile if the
+provider supports automatic port collision detection and resolution.
+
+    22 (guest) => 2200 (host)
+```
+
+7. Login (pass port into the command)
+```
+ssh -i my-ops-key -i my-ops-key-cert.pub ops@localhost -p 2200
+```
+
+### Caveat
+
+The painful part about this implmentation is that you've got to gain access to the box where you
+store your `ca`. If you transfer this outside the server, it could result in a security breach
+(remember, your private key can decrypt data that was encrypted with the accompanying public key).
+So, if you keep it super safe and behind a single box, and you're the only one who has access, then
+if anyone needs access to a server overnight, they'll have to wake you up to get access. Anything
+that can make this easier is welcome, but you have to weigh the added complexities. That's what
+we've done with our next solution.
+
+## Use Vault as a CA
+
+### Requirements
 
 * [Vagrant](https://www.vagrantup.com/)
 * [Vault](https://www.vaultproject.io/)
 
-Run this:
+Jump into the `vault-example` directory and run this:
 ```
 VAULT_ADDR=https://my-vault-domain vagrant up
 ```
@@ -65,7 +146,7 @@ user has no password associated with it. The `ops` user also has very limited pr
 can take a look at processes and you have a home directory to do things with. Go ahead and try to
 login as the `ops` user. Doesn't work. That's because you don't have a signed key to login with.
 
-## Sign your key
+### Sign your key
 
 1. To get access to this box, you'll need a private key, let's make one:
 ```
@@ -82,12 +163,15 @@ my-ops-key.pub
 vault auth -method=ldap username=my-user
 ```
 4. Get that key signed by the certificate authority (vault in our case)
-
 ```
 vault write -field=signed_key ssh-client-signer/sign/ops \
     public_key=@my-ops-key.pub > my-ops-key-cert.pub
 ```
-5. Check which port ssh is listening on for our box:
+5. Inspect the signed public key
+```
+ssh-keygen -Lf my-ops-key-cert.pub
+```
+6. Check which port ssh is listening on for our box:
 ```
 vagrant port
 The forwarded ports for the machine are listed below. Please note that
@@ -96,19 +180,16 @@ provider supports automatic port collision detection and resolution.
 
     22 (guest) => 2222 (host)
 ```
-
-6. Login (pass port into the command)
+7. Login (pass port into the command)
 ```
 ssh -i my-ops-key -i my-ops-key-cert.pub ops@localhost -p 2222
 ```
 
-## Breaking it down
+### Breaking it down
 
 Now, any certificate authority can sign public keys. Since we were using Vault for other parts of
 our infrastructure, and we knew it could also act as a certificate authority, we decided to give it
-a shot as part of our implementation. If you are not using vault, you can look at the `step-1` tag
-in this repository to see what you would need to spin up an independent certificate authority for
-signing public keys with.
+a shot as part of our implementation.
 
 We're also taking advantage of our existing Active Directory resources for user management and so
 we're integrating Vault with AD. This might seem like the same centralized concept we tried

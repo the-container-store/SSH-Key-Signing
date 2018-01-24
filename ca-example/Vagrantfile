@@ -1,0 +1,39 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "bento/centos-7.4"
+
+  config.vm.define "ca-server" do |box|
+    # Make a certificate authority
+    box.vm.provision "shell", inline: <<-SHELL
+      umask 77
+      mkdir -p /vagrant/my-ca && cd /vagrant/my-ca
+      yes y | ssh-keygen -C CA -f ca -q -P ""
+    SHELL
+  end
+
+  config.vm.define "ssh-host" do |box|
+    # Read from the certificate authority
+    config.vm.provision "shell", inline: <<-SHELL
+      sshd_config_path=/etc/ssh/sshd_config
+      capub_path=/etc/ssh/trusted-user-ca-keys.pem
+
+      function update_sshd_config {
+        grep -q "^${1}" "${sshd_config_path}" && \
+          sed -i "s|^${1}.*|${1} ${2}|" "${sshd_config_path}" || \
+          echo "${1} ${2}" >> "${sshd_config_path}"
+      }
+
+      cp -v /vagrant/my-ca/ca.pub "${capub_path}"
+      update_sshd_config TrustedUserCAKeys "${capub_path}"
+      systemctl restart sshd
+    SHELL
+
+    # Make the ops user
+    config.vm.provision "shell", inline: <<-SHELL
+      adduser ops
+      passwd -d ops
+    SHELL
+  end
+end
